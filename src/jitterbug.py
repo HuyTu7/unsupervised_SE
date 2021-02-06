@@ -6,19 +6,15 @@ import re
 import pandas as pd
 import pdb
 from supervised_models import *
-from train_2 import *
-from data_helpers import *
-from random import randrange
 
 class Jitterbug(object):
     def __init__(self,data,target):
-        self.uncertain_thres = 25
+        self.uncertain_thres = 10
         self.target = target
         self.data = data
         self.rest = self.data.copy()
-        self.easy = Easy(self.data, self.target)
+        self.easy = Easy(self.data,self.target)
         self.easy.preprocess()
-        self.save_path = "runs-RQ2/%s/checkpoint-%s" % (self.target, self.target)
 
     def find_patterns(self):
         self.easy.find_patterns()
@@ -97,103 +93,29 @@ class Jitterbug(object):
         df_ignore = self.hard.body.loc[:self.hard.newpart-1].loc[self.hard.body["code"][:self.hard.newpart]=="undetermined"]
         pd.concat([df_yes,df_no,df_ignore], ignore_index=True).to_csv(output, line_terminator="\r\n", index=False)
 
-    def get_supTM(self):
-        self.tm_extra = Treatment(self.data, self.target)
-        self.tm_extra.get_data()
-        self.treatment = Treatment(self.data, self.target)
-        self.treatment.get_data()
-        self.treatment.tmp_decs = []
-        self.treatment.tmp_probs = []
-        self.treatment.tmp_labels = []
 
     def ML_hard(self, model = "RF", est = False, T_rec = 0.9):
-        self.hard = Hard(model=model, est=est, save_path=self.save_path)
+        self.hard = Hard(model=model, est=est)
         self.hard.create(self.rest, self.target)
-        step = 250
-        index = 0
-        self.sample = np.array([])
-        self.data_bod = self.hard.body.copy()
-        pos_raw = np.array(self.data_bod.code.index[self.data_bod.code == "yes"].tolist())
-        neg_raw = np.array(self.data_bod.code.index[self.data_bod.code == "no"].tolist())
-        pos_raw = pos_raw[pos_raw > self.hard.newpart]
-        neg_raw = neg_raw[neg_raw > self.hard.newpart]
-        patience = 0
-        max_loss = 0
-        best_res = {}
-        self.get_supTM()
+        step = 10
         while True:
             pos, neg, total = self.hard.get_numbers()
+            # try:
+            #     print("%d, %d, %d" %(pos,pos+neg, self.hard.est_num))
+            # except:
+            #     print("%d, %d" %(pos,pos+neg))
 
             if pos + neg >= total:
                 break
 
-            if model == "CNN":
-                if index == 0:
-                    a, b, c, d = self.hard.train_CNN(first_train=index)
-                    #self.hard.body = self.hard.body.iloc[:self.hard.newpart]
-                # elif index < 5:
-                #     a, b, c, d = self.hard.train_CNN(bs=32, first_train=False)
-                elif index < 5:
-                    a, b, c, d = self.hard.train_CNN(bs=64, first_train=index)
-                else:
-                    a, b, c, d = self.hard.train_CNN(bs=256, first_train=index)
-            else:
-                a, b, c, d = self.hard.train()
-            # pdb.set_trace()
-            # if self.hard.body.iloc[self.hard.newpart:].shape[0] < 50:
-            #     print("\n!!!" * 3)
-            #     print("Add some noises and making sure that the first few batches have SATDs")
-            #     print("!!!\n" * 3)
-            #     np.random.shuffle(pos_raw)
-            #     np.random.shuffle(neg_raw)
-            #     pos_at = pos_raw[:10]
-            #     neg_at = neg_raw[:10]
-            #     sub_pos, sub_neg = self.data_bod.iloc[pos_at], self.data_bod.iloc[neg_at]
-            #     self.hard.body = pd.concat([self.hard.body, sub_pos, sub_neg], ignore_index=True)
+            a, b, c, d = self.hard.train()
 
-            # self.tm_extra.decisions = self.hard.extra_decs
-            # self.tm_extra.probs = self.hard.extra_probs
-            # self.tm_extra.y_label = self.hard.extra_test["label"]
-            # self.tm_extra.convert_labels_to_text()
-            # try:
-            #     temp_res = self.tm_extra.eval()
-            # except:
-            #     pdb.set_trace()
-            # print("\nAPFD = %s, F1 = %s\n" % (temp_res["APFD"], temp_res["f1"]))
-            #
-            # if temp_res["APFD"] + temp_res["f1"] > max_loss:
-            #     max_loss = temp_res["APFD"] + temp_res["f1"]
-            #     patience = 0
-            #     self.treatment.decisions = np.concatenate(self.treatment.tmp_decs + [self.hard.decisions[a]], 0)
-            #     self.treatment.probs = np.concatenate(self.treatment.tmp_probs + [b], 0)
-            #     self.treatment.y_label = np.concatenate(self.treatment.tmp_labels + [self.hard.body["label"][a]], 0)
-            #     self.treatment.convert_labels_to_text()
-            #     best_res = self.treatment.eval()
-            # else:
-            #     patience += 1
-            #     if patience == 5:
-            #         print("\n***" * 3)
-            #         print(best_res)
-            #         print("***\n" * 3)
-            #         break
-
-            if self.hard.est_num > 0 and pos >= self.hard.est_num * T_rec:
-                break
-            else:
-                print("*!*")
-                print("Current %s Estimated SATDs and found %s SATDs" % (self.hard.est_num, pos))
-                print("*!*")
+            if self.hard.est_num>0 and pos >=self.hard.est_num*T_rec:
+                    break
             if pos < self.uncertain_thres:
                 self.hard.code_batch(a[:step])
-                self.treatment.tmp_decs.append(self.hard.decisions[a[:step]])
-                self.treatment.tmp_probs.append(b[:step])
-                self.treatment.tmp_labels.append(self.hard.body["label"][a[:step]])
             else:
                 self.hard.code_batch(c[:step])
-                self.treatment.tmp_decs.append(self.hard.decisions[c[:step]])
-                self.treatment.tmp_probs.append(d[:step])
-                self.treatment.tmp_labels.append(self.hard.body["label"][c[:step]])
-            index += 1
         return self.hard
 
     def eval(self):
@@ -221,22 +143,10 @@ class Jitterbug(object):
 
         cost = 0
         costs = [cost]
-        try:
-            tps = [tp]
-        except:
-            tps = [0]
-        try:
-            fps = [fp]
-        except:
-            fps = [0]
-        try:
-            tns = [tn]
-        except:
-            tns = [0]
-        try:
-            fns = [fn]
-        except:
-            fns = [0]
+        tps = [tp]
+        fps = [fp]
+        tns = [tn]
+        fns = [fn]
 
         for label in self.hard.body["label"][order]:
             cost+=1.0
@@ -287,7 +197,7 @@ class Jitterbug(object):
 
 
 class Hard(object):
-    def __init__(self,model="RF", est=False, save_path=""):
+    def __init__(self,model="RF", est=False):
         self.step = 10
         self.enable_est = est
         self.model_name = ""
@@ -303,10 +213,6 @@ class Hard(object):
             self.model = SGDClassifier(class_weight="balanced")
         elif model == "CNN":
             self.model_name = "CNN"
-            self.save_path = save_path
-            self.extra_test = None
-            self.extra_decs = None
-            self.extra_probs = None
 
     def create(self, data, target):
         self.record = {"x":[], "pos":[], 'est':[]}
@@ -317,18 +223,14 @@ class Hard(object):
         if self.model_name == "CNN":
             tm = Treatment(data, target)
             tm.get_data()
-            # self.body = pd.DataFrame(0, index=np.arange(len(tm.x_label)), columns=["Abstract","label","code","time"])
-            # tmp = pd.DataFrame(0, index=np.arange(len(tm.y_label)), columns=["Abstract","label","code","time"])
-            self.body = pd.DataFrame(columns=["Abstract", "label", "code", "time"])
-            tmp = pd.DataFrame(columns=["Abstract", "label", "code", "time"])
+            self.body = pd.DataFrame(0, index=np.arange(len(tm.x_label)), columns=["Abstract","label","code","time"])
+            tmp = pd.DataFrame(0, index=np.arange(len(tm.y_label)), columns=["Abstract","label","code","time"])
             self.body["Abstract"], self.body["label"] = load_data_jb(tm.x_content, tm.x_label)
             tmp["Abstract"], tmp["label"] = load_data_jb(tm.y_content, tm.y_label)
             tmp['code'] = ["undetermined"] * len(tmp)
             self.body['code'] = self.body['label']
             self.body = pd.concat([tmp, self.body], ignore_index=True)
-            self.body['time'] = [0.0]*len(self.body)
             self.newpart = len(tm.y_label)
-            self.preprocess()
         else:
             self.loadfile(data[target])
             self.create_old(data)
@@ -401,116 +303,27 @@ class Hard(object):
 
         return uncertain_id, uncertain_prob, certain_id, certain_prob
 
-    ## Get uncertain ##
+        ## Get uncertain ##
 
-    def train_CNN(self, bs=256, first_train=0):
-        if self.body.isnull().values.any():
-            self.body.dropna(axis=0, inplace=True)
-            self.body.reset_index(drop=True, inplace=True)
-
+    def train_CNN(self):
         sample = np.where(np.array(self.body['code']) != "undetermined")[0]
-        print()
-        print("SAMPLE: %s \n" % sample.shape)
-        # extra = [self.body["Abstract"][:self.newpart], self.body["label"][:self.newpart]]
-
-        if first_train==0:
-            mpath = "best_JIT"
-            try:
-                self.decisions = np.load(os.path.abspath(os.path.join(self.save_path, "hard_decisions.npy")), allow_pickle=True)
-                self.extra_train = pd.read_csv(os.path.abspath(os.path.join(self.save_path, "extra_train.csv")),
-                                               index_col=False)
-                self.extra_test = pd.read_csv(os.path.abspath(os.path.join(self.save_path, "extra_test.csv")),
-                                              index_col=False)
-                self.probs = np.load(os.path.abspath(os.path.join(self.save_path, "hard_probabilities.npy")), allow_pickle=True)
-                print("Loaded decisions and probs data files successfully")
-            except:
-                out_dir = os.path.abspath(os.path.join(os.path.curdir, "runs-RQ2", self.target))
-                checkpoint_dir_name = "checkpoint-" + self.target
-                checkpoint_dir = os.path.abspath(os.path.join(out_dir, checkpoint_dir_name))
-                best_checkpoint_dir = os.path.abspath(os.path.join(checkpoint_dir, "%s_checkpoint" % mpath))
-                print(best_checkpoint_dir)
-                if os.path.isfile(best_checkpoint_dir):
-                    self.shuffle_indices, dev_sample_index = train_model(self.body["Abstract"][sample],
-                                                                         self.body["code"][sample], self.target,
-                                                                         allow_save_model=True, d_lossweight=0.0,
-                                                                         model_path=mpath, b_size=bs,
-                                                                         shuffled=True, extra=None,
-                                                                         extra_test=True)
-                else:
-                    print("Training Hard from scratch")
-                    self.shuffle_indices, dev_sample_index = train_model(self.body["Abstract"][sample],
-                                                                         self.body["code"][sample], self.target,
-                                                                         allow_save_model=True, d_lossweight=0.0,
-                                                                         model_path=mpath, b_size=bs,
-                                                                         shuffled=True, extra=None,
-                                                                         extra_test=False)
-                self.extra = self.body.iloc[sample].reset_index(drop=True)
-                self.extra = self.extra.iloc[self.shuffle_indices][dev_sample_index:]
-                extra_index = -1 * int(0.25 * float(self.extra.shape[0]))
-                self.extra_train, self.extra_test = self.extra[:extra_index], self.extra[extra_index:]
-                self.extra_train.to_csv(os.path.abspath(os.path.join(self.save_path, "extra_train.csv")), index=False)
-                self.extra_test.to_csv(os.path.abspath(os.path.join(self.save_path, "extra_test.csv")), index=False)
-
-            self.body = self.body.iloc[:self.newpart]
-            self.body = pd.concat([self.body, self.extra_train], ignore_index=True)
-            self.decisions, self.probs = evaluation(self.body["Abstract"][:self.newpart],
-                                                    self.body["label"][:self.newpart],
-                                                    self.target, model_path=mpath)
-            self.extra_decs, self.extra_probs = evaluation(self.extra_test["Abstract"],
-                                                           self.extra_test["label"],
-                                                           self.target, model_path=mpath)
-
-            np.save(os.path.abspath(os.path.join(self.save_path, "hard_decisions")), self.decisions)
-            np.save(os.path.abspath(os.path.join(self.save_path, "hard_probabilities")), self.probs)
-
-        else:
-            save_path = "best_HARD_%s" % randrange(0, 1000000)
-            ppath = "best_JIT"
-            mpath = "best_J200"
-            if first_train == 1:
-                train_model(self.body["Abstract"][sample], self.body["code"][sample], self.target,
-                            allow_save_model=True, d_lossweight=0.0, model_path=ppath,
-                            b_size=bs, save_path=mpath, shuffled=True, extra=None)
-            else:
-                train_model(self.body["Abstract"][sample], self.body["code"][sample], self.target,
-                             allow_save_model=True, d_lossweight=0.0, model_path=mpath,
-                             b_size=bs, save_path=mpath, shuffled=True, extra=None)
-
-            # pdb.set_trace()
-            self.decisions, self.probs = evaluation(self.body["Abstract"][:self.newpart],
-                                                    self.body["label"][:self.newpart],
-                                                    self.target, model_path=mpath)
-            self.extra_decs, self.extra_probs = evaluation(self.extra_test["Abstract"],
-                                                            self.extra_test["label"],
-                                                            self.target, model_path=mpath)
-        self.probs = np.apply_along_axis(np.max, 1, self.probs)
-        self.extra_probs = np.apply_along_axis(np.max, 1, self.extra_probs)
-        if np.min(self.probs) < 0 or np.max(self.probs) > 1:
-            self.probs = (self.probs - np.min(self.probs)) / np.ptp(self.probs)
-        pdb.set_trace()
-        if self.enable_est:
-            self.est_num, self.est = self.estimate_curve()
+        self.decisions, self.probs = train_model(self.body["Abstract"][sample], self.body["code"][sample], self.target,
+                                                allow_save_model=True, d_lossweight=0.0, model_path="best_hard")
 
         uncertain_id, uncertain_prob = self.uncertain_cnn()
         certain_id, certain_prob = self.certain_cnn()
-        self.sample = sample
         return uncertain_id, uncertain_prob, certain_id, certain_prob
 
     def uncertain_cnn(self):
-        # pos_at = np.where(self.decisions[self.pool] == 1)[0]
-        # pos_at = pos_at[pos_at < self.newpart]
-        try:
-            prob = self.probs[self.pool]
-            order = np.argsort(np.abs(prob - 0.5))
-            return np.array(self.pool)[order], np.array(prob)[order]
-        except:
-            pdb.set_trace()
+        pos_at = list(self.decisions).index(1.0)
+        prob = self.probs[self.pool][:, pos_at]
+        order = np.argsort(np.abs(prob - 0.5))
+        return np.array(self.pool)[order], np.array(prob)[order]
+
 
     def certain_cnn(self):
-        # pos_at = np.where(self.decisions[self.pool] == 1)[0]
-        # pos_at = pos_at[pos_at < self.newpart]
-        # prob = self.probs[pos_at]
-        prob = self.probs[self.pool]
+        pos_at = list(self.decisions).index(1.0)
+        prob = self.probs[self.pool][:, pos_at]
         order = np.argsort(prob)[::-1]
         return np.array(self.pool)[order], np.array(prob)[order]
 
@@ -566,7 +379,7 @@ class Hard(object):
         times = [now+id/10000000.0 for id in range(len(ids))]
         labels = self.body["label"][ids]
         self.body["code"][ids] = labels
-        self.body["time"][ids] = times
+        self.body["time"][ids] =times
 
     def estimate_curve(self):
 
@@ -674,7 +487,7 @@ class Hard(object):
 
 
 class Easy(object):
-    def __init__(self,data,target,thres=0.8):
+    def __init__(self,data,target,thres=0.9):
         self.data=data
         self.target=target
         self.thres = thres
@@ -776,12 +589,9 @@ class MAT_Two_Step(Jitterbug):
 
     def ML_hard(self, model = "RF"):
         treatments = {"RF":RF,"SVM":SVM,"LR":LR,"NB":NB,"DT":DT,"TM":TM}
-        self.hard = treatments[model](self.rest, self.target)
+        self.hard = treatments[model](self.rest,self.target)
         self.hard.preprocess()
-        if model == "CNN":
-            self.hard.train_CNN()
-        else:
-            self.hard.train()
+        self.hard.train()
         return self.hard
 
     def eval(self):
@@ -795,22 +605,10 @@ class MAT_Two_Step(Jitterbug):
         fn = t - tp
         cost = 0
         costs = [cost]
-        try:
-            tps = [tp]
-        except:
-            tps = [0]
-        try:
-            fps = [fp]
-        except:
-            fps = [0]
-        try:
-            tns = [tn]
-        except:
-            tns = [0]
-        try:
-            fns = [fn]
-        except:
-            fns = [0]
+        tps = [tp]
+        fps = [fp]
+        tns = [tn]
+        fns = [fn]
 
         for label in np.array(self.hard.y_label)[order]:
             cost+=1.0
