@@ -5,7 +5,7 @@ import time
 import re
 import pandas as pd
 import pdb
-from supervised_models import *
+from evaluation import *
 
 class Jitterbug(object):
     def __init__(self,data,target):
@@ -13,16 +13,22 @@ class Jitterbug(object):
         self.target = target
         self.data = data
         self.rest = self.data.copy()
-        self.easy = Easy(self.data,self.target)
+        self.easy = Easy_CLAMI(self.data,self.target)
         self.easy.preprocess()
 
     def find_patterns(self):
         self.easy.find_patterns()
-        return self.easy.patterns
 
 
-    def test_patterns(self,output = False):
+    def test_patterns(self,output = False, include=False):
         self.easy.test_patterns(output=output)
+        if not include:
+            self.include = np.array([])
+            self.rest[self.target] = self.data[self.target].iloc[self.easy.left_test]
+        else:
+            full_data = range(self.data[self.target].shape[0])
+            self.include = np.setdiff1d(full_data, self.easy.left_test)
+        print("EASY: %s" % self.easy.stats_test)
         return self.easy.stats_test
 
 
@@ -95,15 +101,18 @@ class Jitterbug(object):
 
 
     def ML_hard(self, model = "RF", est = False, T_rec = 0.9):
-        self.hard = Hard(model=model, est=est)
-        self.hard.create(self.rest, self.target)
-        step = 10
+        self.hard = Hard(model=model, est=est, inc=self.include)
+        self.hard.create(self.rest, self.target, important=self.easy.left_train)
+        step = 100
         while True:
             pos, neg, total = self.hard.get_numbers()
             # try:
             #     print("%d, %d, %d" %(pos,pos+neg, self.hard.est_num))
             # except:
             #     print("%d, %d" %(pos,pos+neg))
+            print("*!*")
+            print("Current Pos=%s Neg=%s and Total=%s" % (pos, neg, total))
+            print("*!*")
 
             if pos + neg >= total:
                 break
@@ -111,7 +120,7 @@ class Jitterbug(object):
             a, b, c, d = self.hard.train()
 
             if self.hard.est_num>0 and pos >=self.hard.est_num*T_rec:
-                    break
+                break
             if pos < self.uncertain_thres:
                 self.hard.code_batch(a[:step])
             else:
@@ -129,8 +138,12 @@ class Jitterbug(object):
         fn = t - tp
 
         # for stopping at target recall
-        hard_tp = self.hard.record['pos'][-1]
-        hard_p = self.hard.record['x'][-1]
+        if self.include.size > 0:
+            hard_tp = self.hard.record['pos'][-1] - self.include.shape[0]
+            hard_p = self.hard.record['x'][-1] - self.include.shape[0]
+        else:
+            hard_tp = self.hard.record['pos'][-1]
+            hard_p = self.hard.record['x'][-1]
         all_tp = hard_tp+tp
         all_fp = fp+hard_p-hard_tp
         prec = all_tp / float(all_fp+all_tp)
@@ -197,9 +210,10 @@ class Jitterbug(object):
 
 
 class Hard(object):
-    def __init__(self,model="RF", est=False):
+    def __init__(self,model="RF", est=False, inc=np.array([])):
         self.step = 10
         self.enable_est = est
+        self.include = inc
         self.model_name = ""
         if model=="RF":
             self.model = RandomForestClassifier(class_weight="balanced_subsample")
@@ -214,7 +228,7 @@ class Hard(object):
         elif model == "CNN":
             self.model_name = "CNN"
 
-    def create(self, data, target):
+    def create(self, data, target, important=np.array([])):
         self.record = {"x":[], "pos":[], 'est':[]}
         self.body = {}
         self.est = []
@@ -233,7 +247,7 @@ class Hard(object):
             self.newpart = len(tm.y_label)
         else:
             self.loadfile(data[target])
-            self.create_old(data)
+            self.create_old(data, important=important)
             self.preprocess()
         return self
 
@@ -245,17 +259,28 @@ class Hard(object):
         return
 
     ### Use previous knowledge, labeled only
-    def create_old(self,data):
-        bodies = [self.body]
+    def create_old(self,data,important=np.array([])):
+
+        bodies = []
         for key in data:
             if key == self.target:
                 continue
             body = data[key]
             label = body["label"]
-            body['code']=pd.Series(label)
+            body['code'] = pd.Series(label)
             bodies.append(body)
-
-        self.body = pd.concat(bodies,ignore_index = True)
+        if important.size == 0:
+            bodies = [self.body] + bodies
+            self.body = pd.concat(bodies, ignore_index=True)
+        else:
+            if self.include.size == 0:
+                body = pd.concat(bodies, ignore_index=True)
+                body = body.iloc[important]
+                self.body = pd.concat([self.body, body], ignore_index=True)
+            else:
+                self.body["code"].iloc[self.include] = "yes"
+                bodies = [self.body] + bodies
+                self.body = pd.concat(bodies, ignore_index=True)
 
     def get_numbers(self):
         total = len(self.body["code"][:self.newpart])
