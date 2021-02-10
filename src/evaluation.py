@@ -2,6 +2,79 @@ from __future__ import division, print_function
 
 from collections import Counter
 import numpy as np
+import pdb
+from clami import *
+from learners import *
+
+# jitterbug.find_patterns()
+# jitterbug.easy_code()
+# jitterbug.test_patterns()
+
+class Easy_CLAMI(object):
+    def __init__(self, data, target, thres=0.05):
+        self.data = data
+        self.target = target
+        self.thres = thres
+        self.stats_test = {'tp': 0, 'p': 0}
+
+    def preprocess(self):
+        treatment = Treatment(self.data, self.target)
+        treatment.preprocess()
+        testdata = treatment.full_test
+        traindata = treatment.full_train
+        self.train_data = getInstancesByCLA(traindata, 50, None)
+        self.x_label = np.array(["yes" if y == 1 else "no" for y in self.train_data["Label"]])
+        self.test_data = getInstancesByCLA(testdata, 50, None)
+        self.y_label = np.array(["yes" if y == 1 else "no" for y in self.test_data["Label"]])
+
+    def find_patterns(self):
+        self.thresholds = [np.percentile(self.train_data['K'], 50 + x*5) for x in range(1, 9, 1)]
+        self.best_thres = -1
+        best_prec = -1
+        self.left_train = None
+        for t in self.thresholds:
+            left_train = range(self.train_data.shape[0])
+            left_train, stats_train = self.remove(self.train_data, self.x_label, left_train, t)
+            print(t, stats_train)
+            prec = float(stats_train["tp"]) / (stats_train["p"] + 0.00001)
+            if prec > best_prec:
+                self.left_train = left_train
+                best_prec = prec
+                self.best_thres = t
+        print("Best Threshold : %s,  Best Prec : %s" % (self.best_thres, best_prec))
+
+    def remove(self, data, label, left, thres):
+        K = data['K'].values
+        p_arr = np.where(K > thres)[0]
+        tp_arr = np.where(label == "yes")[0]
+        tp_arr = np.intersect1d(p_arr, tp_arr)
+        p = p_arr.shape[0]
+        tp = tp_arr.shape[0]
+        # for row in left:
+        #     if data.iloc[row]['K'] > thres:
+        #         to_remove.add(row)
+        #         p += 1
+        #         if label[row] == "yes":
+        #             tp += 1
+
+        #left = list(set(left) - to_remove)
+        left = np.setdiff1d(left, p_arr)
+        return left, {"p": p, "tp": tp}
+
+    def test_patterns(self,output=False):
+        left_test = range(self.test_data.shape[0])
+        self.stats_test = {"tp": 0, "p": 0}
+        self.left_test, stats_test = self.remove(self.test_data, self.y_label, left_test, self.best_thres)
+        self.stats_test["tp"] += stats_test["tp"]
+        self.stats_test["p"] += stats_test["p"]
+        # save the "hard to find" data
+        if output:
+            self.rest = self.data[self.target].loc[left_test]
+            self.rest.to_csv("../new_data/rest/csc/"+self.target+".csv", line_terminator="\r\n", index=False)
+        return self.stats_test
+
+
+
 
 class Eval():
     def __init__(self, y_label):
