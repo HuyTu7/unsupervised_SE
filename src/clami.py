@@ -7,6 +7,7 @@ import sklearn
 import random
 import pdb
 from demos import cmd
+import matplotlib.pyplot as plt
 from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.tree import DecisionTreeRegressor
 from os import listdir
@@ -17,6 +18,9 @@ try:
 except:
    import pickle
 from learners import Treatment, TM, SVM, RF, DT, NB, LR
+from jitterbug import *
+import warnings
+warnings.filterwarnings('ignore')
 
 BUDGET = 50
 POOL_SIZE = 10000
@@ -36,23 +40,32 @@ def load_csv(path="../new_data/original/"):
     return data
 
 def getHigherValueCutoffs(data, percentileCutoff, class_category):
-	# columns = data.columns
-	# cutoffForHigherValuesOfAttribute = []
-	# for c in columns:
-	# 	if c != class_category:
-	# 		value = np.percentile(data[c].values, percentileCutoff)
-	# 		cutoffForHigherValuesOfAttribute.append(value)
-	# return cutoffForHigherValuesOfAttribute
+	'''
+	Parameters
+	----------
+	data : in pandas format
+	percentileCutoff : in integer
+	class_category : [TODO] not needed
+
+	Returns
+	-------
+	'''
 	abc = data.quantile(float(percentileCutoff) / 100)
 	abc = np.array(abc.values)[:-1]
 	return abc
 
 
 def filter_row_by_value(row, cutoffsForHigherValuesOfAttribute):
-	# res = 0
-	# for index in range(len(row) - 1):
-	# 	if row[index] > cutoffsForHigherValuesOfAttribute[index]:
-	# 		res += 1
+	'''
+	Shortcut to filter by rows in pandas
+	sum all the attribute values that is higher than the cutoff
+	----------
+	row
+	cutoffsForHigherValuesOfAttribute
+
+	Returns
+	-------
+	'''
 	rr = row[:-1]
 	condition = np.greater(rr, cutoffsForHigherValuesOfAttribute)
 	res = np.count_nonzero(condition)
@@ -60,8 +73,22 @@ def filter_row_by_value(row, cutoffsForHigherValuesOfAttribute):
 
 
 def getInstancesByCLA(data, percentileCutOff, positiveLabel):
+	'''
+	- unsupervised clustering by median per attribute
+	----------
+	data
+	percentileCutOff
+	positiveLabel
+
+	Returns
+	-------
+
+	'''
+	# get cutoff per fixed percentile for all the attributes
 	cutoffsForHigherValuesOfAttribute = getHigherValueCutoffs(data, percentileCutOff, "Label")
+	# get K for all the rows
 	K = data.apply(lambda row: filter_row_by_value(row, cutoffsForHigherValuesOfAttribute), axis = 1)
+	# cutoff for the cluster to be partitioned into
 	cutoffOfKForTopClusters = np.median(K)
 	instances = [1 if x > cutoffOfKForTopClusters else 0 for x in K]
 	data["CLA"] = instances
@@ -70,6 +97,16 @@ def getInstancesByCLA(data, percentileCutOff, positiveLabel):
 
 
 def getInstancesByRemovingSpecificAttributes(data, attributeIndices, invertSelection):
+	'''
+	removing the attributes
+	----------
+	data
+	attributeIndices
+	invertSelection
+
+	Returns
+	-------
+	'''
 	if not invertSelection:
 		data_res = data.drop(data.columns[attributeIndices], axis=1)
 	else:
@@ -81,6 +118,17 @@ def getInstancesByRemovingSpecificAttributes(data, attributeIndices, invertSelec
 
 
 def getInstancesByRemovingSpecificInstances(data, instanceIndices, invertSelection):
+	'''
+	removing instances
+	----------
+	data
+	instanceIndices
+	invertSelection
+
+	Returns
+	-------
+
+	'''
 	if not invertSelection:
 		data.drop(instanceIndices, axis=0, inplace=True)
 	else:
@@ -90,13 +138,25 @@ def getInstancesByRemovingSpecificInstances(data, instanceIndices, invertSelecti
 
 
 def getSelectedInstances(data, cutoffsForHigherValuesOfAttribute, positiveLabel):
-	# rows = data[data.columns.difference(['Label'])]
+	'''
+	select the instances that violate the assumption
+	----------
+	data
+	cutoffsForHigherValuesOfAttribute
+	positiveLabel
+
+	Returns
+	-------
+	'''
+
 	violations = data.apply(lambda r: getViolationScores(r,
 														 data['Label'],
 														 cutoffsForHigherValuesOfAttribute),
 							axis=1)
 	violations = violations.values
+	# get indices of the violated instances
 	selectedInstances = (violations > 0).nonzero()[0]
+	# remove randomly 90% of the instances that violate the assumptions
 	selectedInstances = np.random.choice(selectedInstances, int(selectedInstances.shape[0] * 0.9), replace=False)
 	# for index in range(data.shape[0]):
 	# 	if violations[index] > 0:
@@ -105,12 +165,28 @@ def getSelectedInstances(data, cutoffsForHigherValuesOfAttribute, positiveLabel)
 
 
 def getCLAMIresults(seed=0, input="../new_data/csc/", output="../results/CSC_CLAMI_"):
+	'''
+	main method for most of the methods:
+	- CLA
+	- CLAMI
+	- FLASH_CLAMI
+	----------
+	seed
+	input
+	output
+
+	Returns
+	-------
+	'''
 	treatments = ["CLA", "FLASH_CLA", "CLA+RF", "CLA+NB"]
 	data = load_csv(path=input)
 	columns = ["Treatment"]+list(data.keys())
 	result = {}
-	#keys = [list(data.keys())[0]
-	for target in data:
+	keys = list(data.keys())
+	keys.sort()
+	print(keys)
+	for target in keys:
+		print(target)
 		result[target] = [CLA(data, target, None, 50)]
 		print(result[target][-1])
 		result[target] += [tune_CLAMI(data, target, None, 50)]
@@ -124,6 +200,41 @@ def getCLAMIresults(seed=0, input="../new_data/csc/", output="../results/CSC_CLA
 		pd.DataFrame(df, columns=columns).to_csv(output + "unsupervised_" + metric + ".csv",
 												 line_terminator="\r\n", index=False)
 
+
+def two_step_Jitterbug(data, target, model = "RF", est = False, T_rec = 0.90, inc=False, seed = 0):
+	np.random.seed(seed)
+	jitterbug = Jitterbug(data,target)
+	jitterbug.find_patterns()
+	jitterbug.test_patterns(include=inc)
+	jitterbug.ML_hard(model = model, est = est, T_rec = T_rec)
+	stats = jitterbug.eval()
+	print(stats)
+	return stats
+
+
+def getJIT_CLAresults(seed=0, input="../new_data/corrected/", output="../results/SE_JITCLA_"):
+	treatments = ["JITCLA"]
+	data = load_csv(path=input)
+	columns = ["Treatment"]+list(data.keys())
+	result = {}
+	keys = list(data.keys())
+	keys.sort()
+	print(keys)
+	for target in keys:
+		print(target)
+		result[target] = [two_step_Jitterbug(data,target,est=True,inc=False,seed=seed)]
+	result["Treatment"] = treatments
+	# Output results to tables
+	metrics = result[columns[-1]][0].keys()
+	for metric in metrics:
+		df = {key: (result[key] if key == "Treatment" else [dict[metric] for dict in result[key]]) for key in result}
+		pd.DataFrame(df, columns=columns).to_csv(output + "unsupervised_" + metric + ".csv",
+												 line_terminator="\r\n", index=False)
+	data_type = "SE_JITCLA"
+	with open("../dump/%s_result.pickle" % data_type, "wb") as f:
+		pickle.dump(result, f)
+
+
 def CLA(data, target, positiveLabel, percentileCutoff, suppress=0, experimental=0):
 	treatment = Treatment(data, target)
 	treatment.preprocess()
@@ -136,6 +247,15 @@ def CLA(data, target, positiveLabel, percentileCutoff, suppress=0, experimental=
 
 
 def CLAMI(data, target, positiveLabel, percentileCutoff, suppress=0, experimental=0):
+	'''
+	CLAMI - Clustering, Labeling, Metric/Features Selection,
+			Instance selection, and Supervised Learning
+	----------
+
+	Returns
+	-------
+
+	'''
 	treatment = Treatment(data, target)
 	treatment.preprocess()
 	data = treatment.full_train
@@ -148,24 +268,31 @@ def CLAMI(data, target, positiveLabel, percentileCutoff, suppress=0, experimenta
 	metricIdxWithTheSameViolationScores = getMetricIndicesWithTheViolationScores(data,
 																				 cutoffsForHigherValuesOfAttribute,
 																				 positiveLabel)
+	print("get Features and the violation scores")
 	# pdb.set_trace()
 	keys = list(metricIdxWithTheSameViolationScores.keys())
+	# start with the features that have the lowest violation scores
 	keys.sort()
 	for k in keys:
 		selectedMetricIndices = metricIdxWithTheSameViolationScores[k]
 		print(selectedMetricIndices)
+		# pick those features for both train and test sets
 		trainingInstancesByCLAMI = getInstancesByRemovingSpecificAttributes(data,
 																			selectedMetricIndices, True)
 		newTestInstances = getInstancesByRemovingSpecificAttributes(testdata,
 																	selectedMetricIndices, True)
+		# restart looking for the cutoffs in the train set
 		cutoffsForHigherValuesOfAttribute = getHigherValueCutoffs(trainingInstancesByCLAMI,
 																  percentileCutoff, "Label")
+		# get instaces that violated the assumption in the train set
 		instIndicesNeedToRemove = getSelectedInstances(trainingInstancesByCLAMI,
 													   cutoffsForHigherValuesOfAttribute,
 													   positiveLabel)
-
+		# remove the violated instances
 		trainingInstancesByCLAMI = getInstancesByRemovingSpecificInstances(trainingInstancesByCLAMI,
 																		   instIndicesNeedToRemove, False)
+
+		# make sure that there are both classes data in the training set
 		zero_count = trainingInstancesByCLAMI[trainingInstancesByCLAMI["Label"] == 0].shape[0]
 		one_count = trainingInstancesByCLAMI[trainingInstancesByCLAMI["Label"] == 1].shape[0]
 		if zero_count > 0 and one_count > 0:
@@ -318,16 +445,32 @@ def training_CLAMI(trainingInstancesByCLAMI, newTestInstances, target, model, al
 
 
 def getViolationScores(data, labels, cutoffsForHigherValuesOfAttribute, key=-1):
+	'''
+	get violation scores
+	----------
+	data
+	labels
+	cutoffsForHigherValuesOfAttribute
+	key
+
+	Returns
+	-------
+
+	'''
 	violation_score = 0
 	if key not in ["Label", "K", "CLA"]:
 		if key != -1:
+			# violation score by columns
 			categories = labels.values
 			cutoff = cutoffsForHigherValuesOfAttribute[key]
+			# violation: less than a median and class = 1 or vice-versa
 			violation_score += np.count_nonzero(np.logical_and(categories == 0, np.greater(data.values, cutoff)))
 			violation_score += np.count_nonzero(np.logical_and(categories == 1, np.less_equal(data.values, cutoff)))
 		else:
+			# violation score by rows
 			row = data.values
 			row_data, row_label = row[:-1], row[-1]
+			# violation: less than a median and class = 1 or vice-versa
 			row_label_0 = np.array(row_label == 0).tolist() * row_data.shape[0]
 			violation_score += np.count_nonzero(np.logical_and(row_label_0,
 															   np.greater(row_data, cutoffsForHigherValuesOfAttribute)))
@@ -342,16 +485,6 @@ def getViolationScores(data, labels, cutoffsForHigherValuesOfAttribute, key=-1):
 	# 	violations.append(getViolationScoreByColumn(attr_data, data["Label"], cutoff))
 	return violation_score
 
-
-# def getViolationScoreByColumn(attr_data, classes, cutoffsForHigherValuesOfAttribute):
-# 	violation_score = 0
-# 	for index in range(attr_data.shape[0]):
-# 		r, category = attr_data[index], classes[index]
-# 		if r <= cutoffsForHigherValuesOfAttribute and category == 1:
-# 			violation_score += 1
-# 		elif r > cutoffsForHigherValuesOfAttribute and category == 0:
-# 			violation_score += 1
-# 	return violation_score
 
 def acquisition_fn(search_space, cart_models):
     vals = []
@@ -394,18 +527,68 @@ def isBetter(new, old, metric):
 
 
 def getMetricIndicesWithTheViolationScores(data, cutoffsForHigherValuesOfAttribute, positiveLabel):
-	#violations = getViolationScores(data, cutoffsForHigherValuesOfAttribute)
+	'''
+	get all the features that violated the assumption
+	----------
+	data
+	cutoffsForHigherValuesOfAttribute
+	positiveLabel
+
+	Returns
+	-------
+
+	'''
+	# cutoffs for all the columns/features
 	cutoffsForHigherValuesOfAttribute = {i: x for i, x in enumerate(cutoffsForHigherValuesOfAttribute)}
+	# use pandas apply per column to find the violation scores of all the features
 	violations = data.apply(lambda col: getViolationScores(col, data['Label'], cutoffsForHigherValuesOfAttribute, key=col.name),
 							axis = 0)
 	violations = violations.values
 	metricIndicesWithTheSameViolationScores = collections.defaultdict(list)
 
+	# store the violated features that share the same violation scores together
 	for attrIdx in range(data.shape[1] - 3):
 		key = violations[attrIdx]
 		metricIndicesWithTheSameViolationScores[key].append(attrIdx)
 	return metricIndicesWithTheSameViolationScores
 
+
+def plot_recall_cost(which = "overall"):
+	'''
+	draw the recall cost curve for all the methods 
+	----------
+	which
+
+	Returns
+	-------
+
+	''''''
+    path = "../dump/"+which+"_result.pickle"
+    with open(path,"rb") as f:
+        results = pickle.load(f)
+
+    font = {'family': 'normal',
+            'weight': 'bold',
+            'size': 20}
+
+    plt.rc('font', **font)
+    paras = {'lines.linewidth': 5, 'legend.fontsize': 20, 'axes.labelsize': 30, 'legend.frameon': False,
+             'figure.autolayout': True, 'figure.figsize': (16, 8)}
+
+    plt.rcParams.update(paras)
+
+    lines = ['-',':','--',(0,(4,2,1,2)),(0,(3,2)),(0,(2,1,1,1))]
+
+    for project in results:
+        fig = plt.figure()
+        for i,treatment in enumerate(results[project]):
+            plt.plot(results[project][treatment]["CostR"], results[project][treatment]["TPR"], linestyle = lines[i], label=treatment)
+        plt.legend()
+        plt.ylabel("Recall")
+        plt.xlabel("Cost")
+        plt.grid()
+        plt.savefig("../figures_"+which+"/" + project + ".png")
+        plt.close(fig)
 
 if __name__ == "__main__":
 	eval(cmd())
